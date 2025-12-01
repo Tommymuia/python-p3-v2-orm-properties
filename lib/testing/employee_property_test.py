@@ -1,65 +1,112 @@
-from department import Department
-from employee import Employee
-import pytest
+from __init__ import CURSOR, CONN
 
+class Department:
+    all = {}
 
-class TestEmployeeProperties:
-    '''Class Employee in employee.py'''
+    def __init__(self, name, location, id=None):
+        self.id = id
+        self.name = name
+        self.location = location
 
-    @pytest.fixture(autouse=True)
-    def reset_db(self):
-        '''drop and recreate tables prior to each test.'''
-        Employee.drop_table()
-        Department.drop_table()
-        Employee.create_table()
-        Department.create_table()
-        # clear the object cache
-        Department.all = {}
-        Employee.all = {}
+    def __repr__(self):
+        return f"<Department {self.id}: {self.name}, {self.location}>"
 
-    def test_name_job_department_valid(self):
-        '''validates name, job title, department id are valid'''
-        # should not raise exception
-        department = Department.create("Payroll", "Building A, 5th Floor")
-        employee = Employee.create("Lee", "Manager", department.id)
+    @property
+    def name(self):
+        return self._name
 
-    def test_name_is_string(self):
-        '''validates name property is assigned a string'''
-        with pytest.raises(ValueError):
-            department = Department.create("Payroll", "Building A, 5th Floor")
-            employee = Employee.create("Lee", "Manager", department.id)
-            employee.name = 7
+    @name.setter
+    def name(self, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Name must be a non-empty string")
+        self._name = value
 
-    def test_name_string_length(self):
-        '''validates name property length > 0'''
-        with pytest.raises(ValueError):
-            department = Department.create("Payroll", "Building A, 5th Floor")
-            employee = Employee.create("Lee", "Manager", department.id)
-            employee.name = ''
+    @property
+    def location(self):
+        return self._location
 
-    def test_location_is_string(self):
-        '''validates job_title property is assigned a string'''
-        with pytest.raises(ValueError):
-            department = Department.create("Payroll", "Building A, 5th Floor")
-            employee = Employee.create("Lee", "Manager", department.id)
-            employee.job_title = 7
+    @location.setter
+    def location(self, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Location must be a non-empty string")
+        self._location = value
 
-    def test_location_string_length(self):
-        '''validates job_title property length > 0'''
-        with pytest.raises(ValueError):
-            department = Department.create("Payroll", "Building A, 5th Floor")
-            employee = Employee.create("Lee", "Manager", department.id)
-            employee.job_title = ''
+    @classmethod
+    def create_table(cls):
+        sql = """
+            CREATE TABLE IF NOT EXISTS departments (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                location TEXT
+            )
+        """
+        CURSOR.execute(sql)
+        CONN.commit()
 
-    def test_department_property(self):
-        department = Department.create("Payroll", "Building C, 3rd Floor")
-        employee = Employee.create(
-            "Raha", "Accountant", department.id)  # no exception
+    @classmethod
+    def drop_table(cls):
+        sql = "DROP TABLE IF EXISTS departments"
+        CURSOR.execute(sql)
+        CONN.commit()
 
-    def test_department_property_fk(self):
-        with pytest.raises(ValueError):
-            Employee.create("Raha", "Accountant", 7)
+    def save(self):
+        sql = "INSERT INTO departments (name, location) VALUES (?, ?)"
+        CURSOR.execute(sql, (self.name, self.location))
+        CONN.commit()
+        self.id = CURSOR.lastrowid
+        type(self).all[self.id] = self
 
-    def test_department_property_type(self):
-        with pytest.raises(ValueError):
-            employee = Employee.create("Raha", "Accountant", "abc")
+    @classmethod
+    def create(cls, name, location):
+        department = cls(name, location)
+        department.save()
+        return department
+
+    def update(self):
+        sql = "UPDATE departments SET name = ?, location = ? WHERE id = ?"
+        CURSOR.execute(sql, (self.name, self.location, self.id))
+        CONN.commit()
+
+    def delete(self):
+        sql = "DELETE FROM departments WHERE id = ?"
+        CURSOR.execute(sql, (self.id,))
+        CONN.commit()
+        del type(self).all[self.id]
+        self.id = None
+
+    @classmethod
+    def instance_from_db(cls, row):
+        department = cls.all.get(row[0])
+        if department:
+            department.name = row[1]
+            department.location = row[2]
+        else:
+            department = cls(row[1], row[2])
+            department.id = row[0]
+            cls.all[department.id] = department
+        return department
+
+    @classmethod
+    def get_all(cls):
+        sql = "SELECT * FROM departments"
+        rows = CURSOR.execute(sql).fetchall()
+        return [cls.instance_from_db(row) for row in rows]
+
+    @classmethod
+    def find_by_id(cls, id):
+        sql = "SELECT * FROM departments WHERE id = ?"
+        row = CURSOR.execute(sql, (id,)).fetchone()
+        return cls.instance_from_db(row) if row else None
+
+    @classmethod
+    def find_by_name(cls, name):
+        sql = "SELECT * FROM departments WHERE name = ?"
+        row = CURSOR.execute(sql, (name,)).fetchone()
+        return cls.instance_from_db(row) if row else None
+
+    def employees(self):
+        from employee import Employee
+        sql = "SELECT * FROM employees WHERE department_id = ?"
+        CURSOR.execute(sql, (self.id,))
+        rows = CURSOR.fetchall()
+        return [Employee.instance_from_db(row) for row in rows]
